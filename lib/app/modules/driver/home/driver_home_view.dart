@@ -245,83 +245,181 @@
 
 // lib/modules/driver/view/driver_home_view.dart
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:get/get.dart';
-import 'driver_home_controller.dart';
+import 'package:google_maps_firebase/app/modules/driver/home/driver_home_controller.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 class DriverHomeView extends GetView<DriverHomeController> {
   const DriverHomeView({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
+    // Controller ko initialize karna agar binding se nahi aa raha
     final controller = Get.put(DriverHomeController());
+
     return Scaffold(
+      // Side Menu
+      drawer: _buildDriverDrawer(),
+
       body: Stack(
         children: [
-          // 1. Map Layer
+          // 1. GOOGLE MAP
           Obx(() => GoogleMap(
-            initialCameraPosition: const CameraPosition(target: LatLng(33.6844, 73.0479), zoom: 14),
-            markers: controller.markers.value,
+            initialCameraPosition: const CameraPosition(
+                target: LatLng(33.6844, 73.0479),
+                zoom: 14
+            ),
+            markers: Set.from(controller.markers),
             onMapCreated: (c) => controller.mapController = c,
             myLocationEnabled: true,
-            zoomControlsEnabled: false, // UI saaf rakhne ke liye zoom buttons hide kar diye
+            zoomControlsEnabled: false,
+            mapType: MapType.normal,
           )),
 
-          // 2. Top Switch Bar (Floating Card)
+          // 2. CUSTOM APP BAR (Menu Button)
           Positioned(
-            top: 60,
+            top: 50,
             left: 20,
-            right: 20,
-            child: Obx(() => Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            child: Builder(builder: (context) => GestureDetector(
+              onTap: () => Scaffold.of(context).openDrawer(),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 10)],
+                ),
+                child: const Icon(Icons.menu, color: Colors.black),
+              ),
+            )),
+          ),
+
+          // 3. ONLINE/OFFLINE STATUS BAR
+          Positioned(
+            top: 110, left: 20, right: 20,
+            child: Obx(() => AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: controller.isOnline.value ? Colors.green : Colors.grey[800],
                 borderRadius: BorderRadius.circular(35),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.15),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
+                boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)],
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Status Text aur Indicator
                   Row(
                     children: [
-                      CircleAvatar(
-                        radius: 5,
-                        backgroundColor: controller.isOnline.value ? Colors.green : Colors.red,
+                      Icon(
+                        controller.isOnline.value ? Icons.wifi : Icons.wifi_off,
+                        color: Colors.white,
                       ),
                       const SizedBox(width: 10),
                       Text(
-                        controller.isOnline.value ? "ONLINE" : "OFFLINE",
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: controller.isOnline.value ? Colors.green : Colors.red,
-                        ),
+                        controller.isOnline.value ? "YOU ARE ONLINE" : "YOU ARE OFFLINE",
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
-
-                  // Stylish Switch
                   Switch(
                     value: controller.isOnline.value,
                     onChanged: (val) => controller.toggleOnlineStatus(),
                     activeColor: Colors.white,
-                    activeTrackColor: Colors.green,
-                    inactiveThumbColor: Colors.white,
-                    inactiveTrackColor: Colors.grey.shade400,
+                    activeTrackColor: Colors.black26,
                   ),
                 ],
               ),
             )),
           ),
+
+          // 4. INCOMING REQUESTS PANEL
+          Obx(() {
+            if (!controller.isOnline.value || controller.incomingRequests.isEmpty) {
+              return const SizedBox.shrink();
+            }
+            return Align(
+              alignment: Alignment.bottomCenter,
+              child: Container(
+                height: 280,
+                margin: const EdgeInsets.all(15),
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(30),
+                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 20)],
+                ),
+                child: Column(
+                  children: [
+                    Container(width: 50, height: 5, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
+                    const SizedBox(height: 15),
+                    const Text("New Ride Requests", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: controller.incomingRequests.length,
+                        itemBuilder: (context, index) {
+                          var req = controller.incomingRequests[index];
+                          var data = req.data() as Map<String, dynamic>;
+
+                          return Card(
+                            elevation: 0,
+                            color: Colors.grey[100],
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.all(10),
+                              leading: const CircleAvatar(backgroundColor: Colors.blue, child: Icon(Icons.person, color: Colors.white)),
+                              title: Text(data['passengerName'] ?? "Passenger", style: const TextStyle(fontWeight: FontWeight.bold)),
+                              subtitle: Text(data['pickup']['address'] ?? "No Address", maxLines: 1),
+                              trailing: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
+                                ),
+                                // YE BUTTON NAVIGATE KAREGA (Controller ke through)
+                                onPressed: () => controller.acceptRide(req.id),
+                                child: const Text("ACCEPT", style: TextStyle(color: Colors.white)),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
         ],
       ),
     );
   }
-}
+
+  // Side Drawer Widget
+  Widget _buildDriverDrawer() {
+    return Drawer(
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          DrawerHeader(
+            decoration: const BoxDecoration(color: Colors.black),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const CircleAvatar(radius: 30, backgroundColor: Colors.amber, child: Icon(Icons.person, size: 40)),
+                const SizedBox(height: 10),
+                const Text("Driver Partner", style: TextStyle(color: Colors.white, fontSize: 18)),
+                Text(controller.isOnline.value ? "Active" : "Inactive", style: const TextStyle(color: Colors.white54)),
+              ],
+            ),
+          ),
+          ListTile(leading: const Icon(Icons.dashboard), title: const Text("Earnings"), onTap: () {}),
+          ListTile(leading: const Icon(Icons.history), title: const Text("Trip History"), onTap: () {}),
+          ListTile(leading: const Icon(Icons.settings), title: const Text("Settings"), onTap: () {}),
+          const Divider(),
+          ListTile(leading: const Icon(Icons.logout, color: Colors.red), title: const Text("Logout"), onTap: () {}),
+        ],
+      ),
+    );
+  }
+}     

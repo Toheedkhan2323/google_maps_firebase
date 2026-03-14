@@ -351,12 +351,14 @@
 //   }
 // }
 
+import 'dart:ui';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/animation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'dart:async';
 
 class DriverHomeController extends GetxController {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -366,25 +368,76 @@ class DriverHomeController extends GetxController {
   var currentPosition = Rxn<Position>();
   GoogleMapController? mapController;
   var markers = <Marker>{}.obs;
+  var incomingRequests = <QueryDocumentSnapshot>[].obs;
+
+  StreamSubscription<Position>? _locationSubscription;
 
   @override
   void onInit() {
     super.onInit();
     _determinePosition();
+    _listenToRideRequests();
   }
 
+  // 1. Listen for new ride requests
+  void _listenToRideRequests() {
+    _firestore
+        .collection('requests')
+        .where('status', isEqualTo: 'searching')
+        .snapshots()
+        .listen((snapshot) {
+      incomingRequests.value = snapshot.docs;
+    });
+  }
+
+  // 2. Accept Ride & Navigate
+  Future<void> acceptRide(String requestId) async {
+    try {
+      String driverId = _auth.currentUser?.uid ?? "";
+
+      var driverDoc = await _firestore.collection('driver').doc(driverId).get();
+      var driverData = driverDoc.data() ?? {};
+
+      await _firestore.collection('requests').doc(requestId).update({
+        'status': 'accepted',
+        'driver': {
+          'id': driverId,
+          'name': driverData['name'] ?? "Driver",
+          'phone': driverData['phone'] ?? "N/A",
+          'lat': currentPosition.value?.latitude,
+          'lng': currentPosition.value?.longitude,
+          'vehicleModel': driverData['vehicleModel'] ?? "Car",
+          'plateNumber': driverData['plateNumber'] ?? "ABC-123",
+        },
+        'acceptedAt': FieldValue.serverTimestamp(),
+      });
+
+      var requestDoc =
+          await _firestore.collection('requests').doc(requestId).get();
+      var rideData = requestDoc.data() as Map<String, dynamic>;
+      rideData['id'] = requestId;
+
+      // Alag screen par bhejna
+      Get.to(() => const DriverEnrouteView(), arguments: rideData);
+
+      Get.snackbar("Success", "Ride Accepted! Heading to pickup.");
+    } catch (e) {
+      Get.snackbar("Error", "Failed to accept ride: $e");
+    }
+  }
+
+  // 3. Location & Permission Logic
   Future<void> _determinePosition() async {
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
 
-    Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 10)
-    ).listen((Position position) {
+    _locationSubscription = Geolocator.getPositionStream(
+            locationSettings: const LocationSettings(
+                accuracy: LocationAccuracy.high, distanceFilter: 10))
+        .listen((Position position) {
       currentPosition.value = position;
-
-      // Marker update karein jab bhi location badle
       _updateDriverMarker(position);
 
       if (isOnline.value) {
@@ -393,30 +446,15 @@ class DriverHomeController extends GetxController {
     });
   }
 
-  // --- Naya Function: Map par Marker dikhane ke liye ---
-  void _updateDriverMarker(Position position) {
-    markers.clear(); // Purana marker hatayein
-    markers.add(
-      Marker(
-        markerId: const MarkerId("my_location"),
-        position: LatLng(position.latitude, position.longitude),
-        rotation: position.heading, // Car ki direction dikhane ke liye
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-        anchor: const Offset(0.5, 0.5),
-        infoWindow: const InfoWindow(title: "Your Location"),
-      ),
-    );
-    markers.refresh(); // UI update karein
-  }
-
   void toggleOnlineStatus() {
     isOnline.value = !isOnline.value;
     if (isOnline.value && currentPosition.value != null) {
       _updateLocationInFirebase(currentPosition.value!);
-      _updateDriverMarker(currentPosition.value!); // Online hote hi marker refresh
     } else {
-      // Offline hone par marker ka rang badal sakte hain ya hide kar sakte hain
-      _firestore.collection('driver').doc(_auth.currentUser!.uid).update({'status': 'offline'});
+      _firestore
+          .collection('driver')
+          .doc(_auth.currentUser!.uid)
+          .update({'status': 'offline'});
     }
   }
 
@@ -426,8 +464,23 @@ class DriverHomeController extends GetxController {
       'lng': position.longitude,
       'heading': position.heading,
       'status': 'online',
-      'vehicleType': 'Car',
       'lastUpdate': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+  }
+
+  void _updateDriverMarker(Position position) {
+    markers.assign(Marker(
+      markerId: const MarkerId("my_location"),
+      position: LatLng(position.latitude, position.longitude),
+      rotation: position.heading,
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+      anchor: const Offset(0.5, 0.5),
+    ));
+  }
+
+  @override
+  void onClose() {
+    _locationSubscription?.cancel();
+    super.onClose();
   }
 }
